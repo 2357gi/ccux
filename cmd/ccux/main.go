@@ -210,6 +210,10 @@ func runPreview(paneID string) error {
 	if s.Title != "" {
 		fmt.Printf("\n%s %s\n", dim("▌"), bold(s.Title))
 	}
+	if s.Question != "" {
+		// the pending question Claude is blocked on — highlight it
+		fmt.Printf("\n%s\n%s\n", "\x1b[1;33m❓ asking you\x1b[0m", indent(s.Question))
+	}
 	if s.LastPrompt != "" {
 		fmt.Printf("\n%s\n%s\n", dim("you ›"), indent(truncate(s.LastPrompt, 400)))
 	}
@@ -240,7 +244,12 @@ func findSession(paneID string) (session.Session, bool, error) {
 // formatRow renders one session as a colored, fixed-width display row (without
 // the leading pane-id field).
 func formatRow(s Session) string {
-	recap := s.Title
+	// A pending question is the most relevant thing to show; otherwise fall back
+	// to the AI title, then the last prompt.
+	recap := s.Question
+	if recap == "" {
+		recap = s.Title
+	}
 	if recap == "" {
 		recap = s.LastPrompt
 	}

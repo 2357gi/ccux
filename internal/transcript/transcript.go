@@ -18,6 +18,7 @@ type Info struct {
 	AITitle           string // AI-generated session title (best one-line recap)
 	LastUserPrompt    string // last genuine user prompt (typed text, not tool results)
 	LastAssistantText string // last assistant text reply
+	Question          string // a pending AskUserQuestion (with option labels), else ""
 	GitBranch         string
 	LastActivity      time.Time
 	NumUserPrompts    int
@@ -60,8 +61,21 @@ type rawMessage struct {
 }
 
 type contentBlock struct {
-	Type string `json:"type"`
-	Text string `json:"text"`
+	Type  string          `json:"type"`
+	Text  string          `json:"text"`
+	Name  string          `json:"name"`  // for tool_use blocks
+	Input json.RawMessage `json:"input"` // for tool_use blocks
+}
+
+// askInput is the input shape of the AskUserQuestion tool.
+type askInput struct {
+	Questions []struct {
+		Question string `json:"question"`
+		Header   string `json:"header"`
+		Options  []struct {
+			Label string `json:"label"`
+		} `json:"options"`
+	} `json:"questions"`
 }
 
 // Parse reads a JSONL transcript and extracts an Info. Malformed lines are
@@ -109,8 +123,15 @@ func Parse(r io.Reader) (Info, error) {
 			if e.IsSidechain {
 				continue
 			}
-			if text := assistantText(e.Message); text != "" {
+			text := assistantText(e.Message)
+			if text != "" {
 				info.LastAssistantText = text
+			}
+			if q := questionText(e.Message); q != "" {
+				info.Question = q
+			} else if text != "" {
+				// a plain text turn supersedes any earlier pending question
+				info.Question = ""
 			}
 		}
 	}
@@ -173,6 +194,46 @@ func assistantText(m *rawMessage) string {
 		}
 	}
 	return strings.Join(texts, " ")
+}
+
+// questionText returns a one-line summary of an AskUserQuestion tool_use in the
+// message (question text plus its option labels), or "" if the message asks no
+// question. This is what Claude is blocked on when a session is Waiting.
+func questionText(m *rawMessage) string {
+	if m == nil || len(m.Content) == 0 {
+		return ""
+	}
+	var blocks []contentBlock
+	if err := json.Unmarshal(m.Content, &blocks); err != nil {
+		return ""
+	}
+	var parts []string
+	for _, b := range blocks {
+		if b.Type != "tool_use" || (b.Name != "AskUserQuestion" && b.Name != "UserQuestionTool") {
+			continue
+		}
+		var in askInput
+		if json.Unmarshal(b.Input, &in) != nil {
+			continue
+		}
+		for _, q := range in.Questions {
+			s := strings.TrimSpace(q.Question)
+			if s == "" {
+				continue
+			}
+			var labels []string
+			for _, o := range q.Options {
+				if l := strings.TrimSpace(o.Label); l != "" {
+					labels = append(labels, l)
+				}
+			}
+			if len(labels) > 0 {
+				s += "  → [" + strings.Join(labels, " / ") + "]"
+			}
+			parts = append(parts, s)
+		}
+	}
+	return strings.Join(parts, "  ┃  ")
 }
 
 func parseTime(s string) time.Time {

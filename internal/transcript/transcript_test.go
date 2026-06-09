@@ -85,6 +85,40 @@ func TestParse(t *testing.T) {
 	}
 }
 
+func TestParseExtractsPendingQuestion(t *testing.T) {
+	jsonl := `{"type":"user","sessionId":"s","timestamp":"2026-06-09T01:00:00.000Z","message":{"role":"user","content":"set up the database"}}
+{"type":"assistant","sessionId":"s","timestamp":"2026-06-09T01:00:05.000Z","message":{"role":"assistant","content":[{"type":"tool_use","name":"AskUserQuestion","input":{"questions":[{"question":"Which database?","header":"DB","options":[{"label":"Postgres"},{"label":"MySQL"}]}]}}]}}`
+
+	info, err := Parse(strings.NewReader(jsonl))
+	if err != nil {
+		t.Fatalf("Parse error: %v", err)
+	}
+	if !strings.Contains(info.Question, "Which database?") {
+		t.Errorf("Question = %q, want it to contain the question text", info.Question)
+	}
+	if !strings.Contains(info.Question, "Postgres") || !strings.Contains(info.Question, "MySQL") {
+		t.Errorf("Question = %q, want it to include the option labels", info.Question)
+	}
+}
+
+func TestParseClearsAnsweredQuestion(t *testing.T) {
+	// A question followed by a plain text assistant turn means the round is over;
+	// it must no longer be reported as a pending question.
+	jsonl := `{"type":"assistant","sessionId":"s","timestamp":"2026-06-09T01:00:05.000Z","message":{"role":"assistant","content":[{"type":"tool_use","name":"AskUserQuestion","input":{"questions":[{"question":"Which database?","options":[{"label":"Postgres"}]}]}}]}}
+{"type":"assistant","sessionId":"s","timestamp":"2026-06-09T01:01:00.000Z","message":{"role":"assistant","content":[{"type":"text","text":"Going with Postgres."}]}}`
+
+	info, err := Parse(strings.NewReader(jsonl))
+	if err != nil {
+		t.Fatalf("Parse error: %v", err)
+	}
+	if info.Question != "" {
+		t.Errorf("Question = %q, want empty (a later text reply ends the question)", info.Question)
+	}
+	if info.LastAssistantText != "Going with Postgres." {
+		t.Errorf("LastAssistantText = %q", info.LastAssistantText)
+	}
+}
+
 func TestParseEmpty(t *testing.T) {
 	info, err := Parse(strings.NewReader(""))
 	if err != nil {

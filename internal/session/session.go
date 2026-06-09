@@ -29,6 +29,7 @@ type Session struct {
 	Title      string // AI-generated title
 	LastPrompt string
 	LastReply  string
+	Question   string // pending AskUserQuestion, if the session is asking one
 
 	Activity       int64 // pane_activity, for sorting
 	TranscriptPath string
@@ -80,6 +81,7 @@ func Collect() ([]Session, error) {
 				s.Title = info.AITitle
 				s.LastPrompt = info.LastUserPrompt
 				s.LastReply = info.LastAssistantText
+				s.Question = info.Question
 				if info.GitBranch != "" {
 					s.GitBranch = info.GitBranch
 				}
