@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/2357gi/ccux/internal/hookstate"
 	"github.com/2357gi/ccux/internal/proc"
 	"github.com/2357gi/ccux/internal/status"
 	"github.com/2357gi/ccux/internal/tmux"
@@ -58,7 +59,21 @@ func Collect() ([]Session, error) {
 		}
 	}
 
-	transcripts := resolveTranscripts(home, claudePanes)
+	// hook-reported state (authoritative, keyed by pane) takes precedence over
+	// scraping the rendered pane. It also pins the exact session id, which
+	// resolves the recap transcript even when several claudes share a cwd.
+	records := make(map[string]hookstate.Record)
+	sessionIDs := make(map[string]string)
+	for _, p := range claudePanes {
+		if rec, ok := hookstate.Read(home, p.ID); ok {
+			records[p.ID] = rec
+			if rec.SessionID != "" {
+				sessionIDs[p.ID] = rec.SessionID
+			}
+		}
+	}
+
+	transcripts := resolveTranscripts(home, claudePanes, sessionIDs)
 
 	var sessions []Session
 	for _, p := range claudePanes {
@@ -69,9 +84,20 @@ func Collect() ([]Session, error) {
 			Cwd:      p.Path,
 			Activity: p.Activity,
 		}
-		if captured, err := tmux.CaptureVisible(p.ID); err == nil {
+
+		captured, _ := tmux.CaptureVisible(p.ID)
+		s.Context = status.ContextLeft(captured)
+
+		rec, hooked := records[p.ID]
+		if hooked {
+			if st, ok := status.FromState(rec.State); ok {
+				s.Status = st
+			} else {
+				hooked = false
+			}
+		}
+		if !hooked {
 			s.Status = status.Classify(captured)
-			s.Context = status.ContextLeft(captured)
 		}
 
 		if tp := transcripts[p.ID]; tp != "" {
@@ -87,6 +113,14 @@ func Collect() ([]Session, error) {
 				}
 			}
 		}
+
+		// Without hook state, a transcript-detected pending question is the most
+		// reliable "needs you" signal.
+		if !hooked && s.Question != "" {
+			if st, ok := status.FromState("waiting"); ok {
+				s.Status = st
+			}
+		}
 		sessions = append(sessions, s)
 	}
 
@@ -94,26 +128,51 @@ func Collect() ([]Session, error) {
 	return sessions, nil
 }
 
-// resolveTranscripts maps each claude pane to its transcript file, grouping
-// panes by working directory so panes that share a cwd get distinct files.
-func resolveTranscripts(home string, panes []tmux.Pane) map[string]string {
+// resolveTranscripts maps each claude pane to its transcript file. When a pane's
+// session id is known (from hook state) the transcript is pinned exactly;
+// remaining panes are matched within their working directory by recency.
+func resolveTranscripts(home string, panes []tmux.Pane, sessionIDs map[string]string) map[string]string {
+	out := make(map[string]string)
+
 	byCwd := make(map[string][]tmux.Pane)
 	for _, p := range panes {
+		if sid := sessionIDs[p.ID]; sid != "" {
+			path := filepath.Join(transcript.ProjectPath(home, p.Path), sid+".jsonl")
+			if _, err := os.Stat(path); err == nil {
+				out[p.ID] = path
+				continue
+			}
+		}
 		byCwd[p.Path] = append(byCwd[p.Path], p)
 	}
 
-	out := make(map[string]string)
 	for cwd, group := range byCwd {
 		files := listTranscripts(transcript.ProjectPath(home, cwd))
+		// exclude transcripts already pinned to a pane in this cwd
+		var avail []fileRef
+		for _, f := range files {
+			if !pinned(out, f.Path) {
+				avail = append(avail, f)
+			}
+		}
 		refs := make([]paneRef, len(group))
 		for i, p := range group {
 			refs[i] = paneRef{ID: p.ID, Activity: p.Activity}
 		}
-		for paneID, path := range assignTranscripts(refs, files) {
+		for paneID, path := range assignTranscripts(refs, avail) {
 			out[paneID] = path
 		}
 	}
 	return out
+}
+
+func pinned(out map[string]string, path string) bool {
+	for _, v := range out {
+		if v == path {
+			return true
+		}
+	}
+	return false
 }
 
 // listTranscripts returns the .jsonl transcript files directly in dir.

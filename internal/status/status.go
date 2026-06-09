@@ -34,6 +34,20 @@ type Status struct {
 	Glyph string
 }
 
+// FromState maps a hook-reported state string ("working"/"waiting"/"idle") to a
+// Status. ok is false for an unrecognized state.
+func FromState(s string) (Status, bool) {
+	switch s {
+	case "working":
+		return statusFor(Working), true
+	case "waiting":
+		return statusFor(Waiting), true
+	case "idle":
+		return statusFor(Idle), true
+	}
+	return Status{}, false
+}
+
 func statusFor(k Kind) Status {
 	switch k {
 	case Idle:

@@ -151,6 +151,19 @@ func TestStatusHasLabelAndGlyph(t *testing.T) {
 	}
 }
 
+func TestFromState(t *testing.T) {
+	cases := map[string]Kind{"working": Working, "waiting": Waiting, "idle": Idle}
+	for s, want := range cases {
+		got, ok := FromState(s)
+		if !ok || got.Kind != want {
+			t.Errorf("FromState(%q) = (%v, %v), want kind %v", s, got.Kind, ok, want)
+		}
+	}
+	if _, ok := FromState("bogus"); ok {
+		t.Error("FromState(bogus) ok = true, want false")
+	}
+}
+
 func TestContextLeft(t *testing.T) {
 	tests := []struct {
 		captured string

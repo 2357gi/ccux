@@ -3,11 +3,15 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"strings"
+	"time"
 
+	"github.com/2357gi/ccux/internal/hookstate"
 	"github.com/2357gi/ccux/internal/session"
 	"github.com/2357gi/ccux/internal/status"
 	"github.com/2357gi/ccux/internal/tmux"
@@ -24,6 +28,8 @@ Usage:
   ccux feed            print the fzf input lines (used by the ctrl-r reload)
   ccux preview <pane>  print the status + recap for one pane (used by fzf)
   ccux jump <pane>     switch the tmux client to the given pane
+  ccux hook <state>    record a session's state (used by Claude Code hooks);
+                       state is working|waiting|idle|end
   ccux version         print the version
 `
 
@@ -42,6 +48,8 @@ func main() {
 		err = runList()
 	case "feed":
 		err = runFeed()
+	case "hook":
+		err = runHook(args[1:])
 	case "preview":
 		if len(args) < 2 {
 			err = fmt.Errorf("preview needs a pane id")
@@ -93,8 +101,7 @@ func runInteractive() error {
 	}
 	q := "'" + self + "'"
 
-	header := fmt.Sprintf("  %s  %s  %s  %s   (ctrl-r: refresh)",
-		pad("STATUS", 10), pad("PROJECT", 20), pad("BRANCH", 16), "RECAP")
+	header := "  " + columnHeader() + "   (ctrl-r: refresh)"
 
 	fzf := exec.Command("fzf",
 		"--ansi",
@@ -105,7 +112,7 @@ func runInteractive() error {
 		"--header", header,
 		"--prompt", "Claude Sessions > ",
 		"--preview", q+" preview {1}",
-		"--preview-window", "right:55%:wrap",
+		"--preview-window", "down:50%:wrap",
 		"--bind", "ctrl-r:reload("+q+" feed)",
 		"--color", "pointer:75,marker:75,prompt:75,info:240,header:245,hl:75,hl+:75",
 	)
@@ -153,6 +160,49 @@ func runFeed() error {
 	return nil
 }
 
+// runHook is invoked by Claude Code hooks to record a session's live state,
+// keyed by the tmux pane it runs in. The desired state is passed as the first
+// argument ("working" | "waiting" | "idle" | "end"); "end" clears the record.
+// The hook's JSON payload (with session_id) is read from stdin. A claude not
+// running inside tmux has no TMUX_PANE and is ignored.
+func runHook(args []string) error {
+	pane := os.Getenv("TMUX_PANE")
+	if pane == "" {
+		return nil
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return err
+	}
+
+	state := ""
+	if len(args) > 0 {
+		state = args[0]
+	}
+
+	// best-effort: pull session_id (and event) from the hook payload
+	var payload struct {
+		SessionID     string `json:"session_id"`
+		HookEventName string `json:"hook_event_name"`
+	}
+	if data, err := io.ReadAll(os.Stdin); err == nil {
+		_ = json.Unmarshal(data, &payload)
+	}
+
+	if state == "end" || payload.HookEventName == "SessionEnd" {
+		return hookstate.Clear(home, pane)
+	}
+	if !hookstate.ValidState(state) {
+		return nil
+	}
+	return hookstate.Write(home, pane, hookstate.Record{
+		State:     state,
+		SessionID: payload.SessionID,
+		Pane:      pane,
+		Unix:      time.Now().Unix(),
+	})
+}
+
 // paneIDFromSelection extracts the hidden pane-id (field 1) from a line fzf
 // emitted on selection, or "" when nothing was selected.
 func paneIDFromSelection(out string) string {
@@ -173,12 +223,18 @@ func runList() error {
 		fmt.Println("No Claude Code sessions found in tmux panes.")
 		return nil
 	}
-	fmt.Printf("  %s  %s  %s  %s  %s\n",
-		pad("TARGET", 18), pad("STATUS", 10), pad("PROJECT", 20), pad("BRANCH", 16), "RECAP")
+	fmt.Printf("  %s  %s\n", pad("PANE", 18), columnHeader())
 	for _, s := range sessions {
 		fmt.Printf("  %s  %s\n", pad(s.Target, 18), formatRow(s))
 	}
 	return nil
+}
+
+// columnHeader is the shared column header for the session table (the part after
+// the optional PANE column).
+func columnHeader() string {
+	return fmt.Sprintf("%s  %s  %s  %s%s",
+		pad("STATUS", 10), pad("DIR", 22), pad("BRANCH", 16), pad("CTX", 6), "RECAP")
 }
 
 // runPreview prints the status and recap for a single pane, plus a tail of the
@@ -259,7 +315,7 @@ func formatRow(s Session) string {
 	ctx := s.Context
 	return fmt.Sprintf("%s  %s  %s  %s%s",
 		colorStatus(s.Status),
-		pad(truncate(s.Project, 20), 20),
+		pad(truncate(s.Project, 22), 22),
 		pad(truncate(s.GitBranch, 16), 16),
 		ctxField(ctx),
 		truncate(recap, 80),
