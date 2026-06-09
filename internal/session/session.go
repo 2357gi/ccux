@@ -34,9 +34,6 @@ type Session struct {
 	TranscriptPath string
 }
 
-// captureLines is how much scrollback to read when classifying status.
-const captureLines = 30
-
 // Collect gathers every claude session currently running inside tmux, sorted
 // for display (attention-worthy first).
 func Collect() ([]Session, error) {
@@ -71,7 +68,7 @@ func Collect() ([]Session, error) {
 			Cwd:      p.Path,
 			Activity: p.Activity,
 		}
-		if captured, err := tmux.Capture(p.ID, captureLines); err == nil {
+		if captured, err := tmux.CaptureVisible(p.ID); err == nil {
 			s.Status = status.Classify(captured)
 			s.Context = status.ContextLeft(captured)
 		}

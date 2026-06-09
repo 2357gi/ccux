@@ -1,0 +1,246 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ccux — Claude Code セッションを tmux 横断ブラウズ</title>
+<style>
+  :root{
+    --bg:#0d1117; --panel:#161b22; --panel2:#1c2430; --border:#30363d;
+    --fg:#c9d1d9; --muted:#8b949e; --accent:#58a6ff; --accent2:#7ee787;
+    --waiting:#e3b341; --working:#56d4dd; --idle:#7ee787; --active:#6e7681;
+    --code:#1b2330;
+  }
+  *{box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{
+    margin:0; background:var(--bg); color:var(--fg);
+    font-family:-apple-system,BlinkMacSystemFont,"Hiragino Kaku Gothic ProN","Segoe UI",sans-serif;
+    line-height:1.75; font-size:15px;
+  }
+  .wrap{max-width:880px; margin:0 auto; padding:0 24px 96px}
+  header.hero{
+    padding:64px 24px 40px; text-align:center;
+    background:radial-gradient(1200px 400px at 50% -10%, #1b2a44 0%, var(--bg) 70%);
+    border-bottom:1px solid var(--border);
+  }
+  .hero h1{font-size:52px; margin:0; letter-spacing:-1px; font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+  .hero h1 .c{color:var(--accent)}
+  .hero p{color:var(--muted); font-size:18px; margin:12px auto 0; max-width:620px}
+  .badges{margin-top:22px; display:flex; gap:10px; justify-content:center; flex-wrap:wrap}
+  .badge{font-size:12px; color:var(--muted); border:1px solid var(--border); border-radius:999px; padding:4px 12px; background:var(--panel)}
+  .badge a{color:var(--accent); text-decoration:none}
+  h2{margin:52px 0 14px; font-size:24px; border-bottom:1px solid var(--border); padding-bottom:8px}
+  h3{margin:30px 0 8px; font-size:18px; color:#e6edf3}
+  p{margin:10px 0}
+  a{color:var(--accent)}
+  code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace; background:var(--code); padding:2px 6px; border-radius:5px; font-size:13.5px; color:#e6edf3}
+  pre{background:var(--code); border:1px solid var(--border); border-radius:10px; padding:16px 18px; overflow:auto; font-size:13px; line-height:1.6}
+  pre code{background:none; padding:0}
+  .kbd{display:inline-block; font-family:ui-monospace,monospace; font-size:12px; background:#22272e; border:1px solid var(--border); border-bottom-width:2px; border-radius:6px; padding:1px 7px; color:#e6edf3}
+  table{width:100%; border-collapse:collapse; margin:14px 0; font-size:14px}
+  th,td{border:1px solid var(--border); padding:10px 12px; text-align:left; vertical-align:top}
+  th{background:var(--panel2); color:#e6edf3}
+  td code{font-size:12.5px}
+  .term{
+    background:#0a0e14; border:1px solid var(--border); border-radius:12px; overflow:hidden;
+    font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:12.5px; line-height:1.55;
+    box-shadow:0 12px 40px rgba(0,0,0,.5); margin:18px 0;
+  }
+  .term .bar{background:#161b22; padding:8px 14px; border-bottom:1px solid var(--border); color:var(--muted); font-size:12px}
+  .term .bar .dot{display:inline-block; width:11px; height:11px; border-radius:50%; margin-right:6px; vertical-align:middle}
+  .term .body{padding:14px 16px; white-space:pre; overflow:auto}
+  .s-wait{color:var(--waiting); font-weight:600}
+  .s-work{color:var(--working); font-weight:600}
+  .s-idle{color:var(--idle); font-weight:600}
+  .s-act{color:var(--active)}
+  .dim{color:var(--muted)}
+  .sel{background:#1f6feb33; display:block}
+  .note{background:var(--panel); border-left:3px solid var(--accent); border-radius:0 8px 8px 0; padding:12px 16px; margin:16px 0; color:#cdd9e5}
+  .warn{border-left-color:var(--waiting)}
+  .grid{display:grid; grid-template-columns:repeat(auto-fit,minmax(200px,1fr)); gap:12px; margin:14px 0}
+  .card{background:var(--panel); border:1px solid var(--border); border-radius:10px; padding:14px 16px}
+  .card h4{margin:0 0 6px; font-size:15px; color:#e6edf3}
+  .card p{margin:0; color:var(--muted); font-size:13.5px}
+  .pill{font-family:ui-monospace,monospace; font-size:18px; margin-right:6px}
+  ol li,ul li{margin:6px 0}
+  footer{color:var(--muted); text-align:center; font-size:13px; margin-top:60px; border-top:1px solid var(--border); padding-top:24px}
+  .toc{background:var(--panel); border:1px solid var(--border); border-radius:10px; padding:14px 20px; margin:24px 0; columns:2; font-size:14px}
+  .toc a{text-decoration:none}
+  @media(max-width:620px){ .toc{columns:1} .hero h1{font-size:40px} }
+</style>
+</head>
+<body>
+<header class="hero">
+  <h1><span class="c">cc</span>ux</h1>
+  <p>tmux の複数ペインで横断的に動いている <strong>Claude Code セッション</strong>を一覧・プレビューし、選んだセッションのペインへ一発で移動するツール。<a href="https://github.com/2357gi/ghux">ghux</a> の Claude Code 版。</p>
+  <div class="badges">
+    <span class="badge">Go</span>
+    <span class="badge">tmux + fzf</span>
+    <span class="badge">TDD</span>
+    <span class="badge"><a href="https://github.com/2357gi/ccux">github.com/2357gi/ccux</a></span>
+  </div>
+</header>
+
+<div class="wrap">
+
+  <div class="toc">
+    <strong>目次</strong><br>
+    <a href="#what">これは何か</a><br>
+    <a href="#install">インストール</a><br>
+    <a href="#usage">使い方とコマンド</a><br>
+    <a href="#keys">キーバインド</a><br>
+    <a href="#status">ステータスの種類</a><br>
+    <a href="#fresh">ステータスの鮮度（"遅い"の正体）</a><br>
+    <a href="#recap">recap（要約）の中身</a><br>
+    <a href="#how">仕組み・データフロー</a><br>
+    <a href="#limits">制限・既知の挙動</a><br>
+    <a href="#dev">開発（TDD構成）</a>
+  </div>
+
+  <h2 id="what">これは何か</h2>
+  <p>あちこちの tmux セッション / ウィンドウ / ペインで Claude Code を同時に走らせていると、「いまどれが入力待ちで、どれが作業中で、何をやっていたか」を見失いがち。<code>ccux</code> は全ペインを走査して <code>claude</code> が動いているペインだけを集め、各セッションの<strong>ステータス</strong>と<strong>recap（要約）</strong>を fzf で一覧プレビューし、選んだセッションが開いているペインへ <code>tmux</code> で移動します。</p>
+
+  <div class="term">
+    <div class="bar"><span class="dot" style="background:#ff5f56"></span><span class="dot" style="background:#ffbd2e"></span><span class="dot" style="background:#27c93f"></span> ccux — popup (prefix C-j)</div>
+    <div class="body">Claude Sessions &gt; <span class="dim">█</span>
+  <span class="dim">STATUS      PROJECT               BRANCH         RECAP        (ctrl-r: refresh)</span>
+<span class="sel">▶ <span class="s-wait">▲ Waiting</span>   web-app               main           Add OAuth login flow                   </span>
+  <span class="s-wait">▲ Waiting</span>   api-server            develop   0%   Investigate request timeout
+  <span class="s-work">… Working</span>   dotfiles              master   16%   Build ccux tool
+  <span class="s-work">… Working</span>   cli-tool              main      14%   Refactor config loader
+  <span class="s-idle">● Idle</span>      docs-site             feat/nav       Rewrite the getting-started guide
+                                                  <span class="dim">┌─ preview ─────────────────────────────┐</span>
+                                                  <span class="dim">│</span> <span class="s-wait">▲ Waiting</span>  <strong>web-app</strong>                  <span class="dim">│</span>
+                                                  <span class="dim">│ branch main   pane web-app:0.1        │</span>
+                                                  <span class="dim">│ ▌</span> Add OAuth login flow              <span class="dim">│</span>
+                                                  <span class="dim">│ you ›</span> Use PKCE for the auth code?     <span class="dim">│</span>
+                                                  <span class="dim">│ claude ›</span> Yes — added PKCE + tests.    <span class="dim">│</span>
+                                                  <span class="dim">│ ──── live pane ────                   │</span>
+                                                  <span class="dim">└───────────────────────────────────────┘</span></div>
+  </div>
+
+  <h2 id="install">インストール</h2>
+  <pre><code>go install github.com/2357gi/ccux/cmd/ccux@latest
+# または clone して
+make install        # go install ./cmd/ccux  ( -&gt; $GOPATH/bin )</code></pre>
+  <p>前提: <code>fzf</code> と <code>tmux</code>。バイナリは <code>~/go/bin/ccux</code>（PATH 上）に入ります。</p>
+
+  <h3>tmux からポップアップで呼ぶ</h3>
+  <p><code>~/.tmux.conf</code>:</p>
+  <pre><code>bind-key -T prefix C-j display-popup -w 90% -h 80% -E "exec ccux"</code></pre>
+  <p><span class="kbd">prefix</span> <span class="kbd">C-j</span> でフローティングポップアップが開き、選択するとそのペインへ飛びます。</p>
+
+  <h2 id="usage">使い方とコマンド</h2>
+  <table>
+    <tr><th>コマンド</th><th>動作</th></tr>
+    <tr><td><code>ccux</code></td><td>fzf で対話選択 → 選んだペインへ移動（メインの使い方）</td></tr>
+    <tr><td><code>ccux list</code></td><td>セッション一覧を標準出力に表示（人間が読む用）</td></tr>
+    <tr><td><code>ccux preview &lt;pane&gt;</code></td><td>1 ペイン分の status + recap を表示（fzf の preview が内部で呼ぶ）</td></tr>
+    <tr><td><code>ccux feed</code></td><td>fzf 入力行を出力（<span class="kbd">ctrl-r</span> リロードが内部で呼ぶ）</td></tr>
+    <tr><td><code>ccux jump &lt;pane&gt;</code></td><td>指定ペインへ移動（<code>%9</code> や <code>sess:win.pane</code> 形式）</td></tr>
+    <tr><td><code>ccux version</code></td><td>バージョン表示</td></tr>
+  </table>
+
+  <h2 id="keys">キーバインド</h2>
+  <h3>tmux</h3>
+  <table>
+    <tr><th>キー</th><th>動作</th></tr>
+    <tr><td><span class="kbd">prefix</span> <span class="kbd">C-j</span></td><td>ccux ポップアップを開く（要 .tmux.conf 設定）</td></tr>
+  </table>
+  <h3>fzf 画面内</h3>
+  <table>
+    <tr><th>キー</th><th>動作</th></tr>
+    <tr><td><span class="kbd">↑</span>/<span class="kbd">↓</span> または <span class="kbd">C-k</span>/<span class="kbd">C-j</span></td><td>選択を移動（移動するたびプレビューが<strong>ライブ更新</strong>）</td></tr>
+    <tr><td><span class="kbd">Enter</span></td><td>そのセッションのペインへ移動</td></tr>
+    <tr><td><span class="kbd">C-r</span></td><td>一覧（STATUS列）を<strong>再取得</strong>して最新化</td></tr>
+    <tr><td><span class="kbd">Esc</span> / <span class="kbd">C-c</span></td><td>キャンセル（移動しない）</td></tr>
+    <tr><td>タイプ</td><td>プロジェクト名・ブランチ・recap で絞り込み（fuzzy）</td></tr>
+  </table>
+
+  <h2 id="status">ステータスの種類</h2>
+  <p>ステータスは <code>tmux capture-pane</code> で取得したペインの表示内容から判定します。種類は次の4つ。注意が必要なもの（Waiting → Working → Idle → Active）の順に並びます。</p>
+  <table>
+    <tr><th>表示</th><th>意味</th><th>判定根拠（ペイン内テキスト）</th></tr>
+    <tr><td><span class="pill s-wait">▲</span><span class="s-wait">Waiting</span></td><td><strong>あなたの操作待ち</strong>。承認プロンプトや確認待ちで止まっている。最優先で表示。</td><td><code>❯ 1.</code> のような選択肢 / <code>(y/n)</code> / 「Do you want to…」＋番号付き選択肢</td></tr>
+    <tr><td><span class="pill s-work">…</span><span class="s-work">Working</span></td><td><strong>実行中・思考中</strong>。ツール実行や推論で動いている。</td><td><code>esc to interrupt</code> の表示、またはスピナー（<code>✽ ⠋ ⠙ ⠹ …</code>）</td></tr>
+    <tr><td><span class="pill s-idle">●</span><span class="s-idle">Idle</span></td><td><strong>入力待ち</strong>。空のプロンプト枠が出ていて、あなたが打つのを待っている。</td><td>空の入力行 <code>│ &gt;</code> / <code>❯</code> だけの行</td></tr>
+    <tr><td><span class="pill s-act">○</span><span class="s-act">Active</span></td><td><strong>不明／その他</strong>。上のどれにも一致しない時のフォールバック。</td><td>（該当シグナルなし）</td></tr>
+  </table>
+  <p>あわせて <strong>context 残量 %</strong>（auto-compact までの残り）もペイン表示から拾って列に出します。</p>
+
+  <h2 id="fresh">ステータスの鮮度（"遅い" の正体）</h2>
+  <p>結論：<strong>データ取得そのものは速い（実測 約0.2秒）</strong>。"遅い" と感じるのは fzf を<strong>開いている間、一覧が起動時のスナップショットのまま固定される</strong>ためです。fzf には定期リロード機能が無いので、ccux は以下の設計にしています。</p>
+  <div class="note">
+    <strong>鮮度のルール</strong>
+    <ul style="margin:6px 0">
+      <li><strong>一覧（STATUS列）</strong>：fzf 起動時の一回ぶんのスナップショット。<span class="kbd">C-r</span> で再取得して最新化できます。</li>
+      <li><strong>プレビュー（右ペイン）</strong>：選択を動かすたびに <code>ccux preview</code> を再実行するので、recap も「live pane」も<strong>常に最新</strong>です。</li>
+      <li><strong>再実行</strong>：<code>ccux</code> / <code>ccux list</code> を実行するたびに全ペインを取り直すのでキャッシュ無し＝そのときの状態が出ます。</li>
+    </ul>
+  </div>
+  <p>つまり「いまの状態を確実に見たい」ときは、対象セッションにカーソルを合わせてプレビューを見るか、<span class="kbd">C-r</span> を押せば最新になります。</p>
+
+  <h2 id="recap">recap（要約）の中身</h2>
+  <p>プレビューには、そのセッションのトランスクリプト（<code>~/.claude/projects/…/&lt;session&gt;.jsonl</code>）から抽出した要約を表示します。</p>
+  <div class="grid">
+    <div class="card"><h4>▌ タイトル</h4><p>Claude が自動生成したセッションタイトル（<code>ai-title</code>）。最良の1行要約。未生成なら直近プロンプトで代替。</p></div>
+    <div class="card"><h4>you ›</h4><p>あなたが最後に打ったプロンプト（ツール結果は除外）。</p></div>
+    <div class="card"><h4>claude ›</h4><p>Claude の最後のテキスト応答。</p></div>
+    <div class="card"><h4>──── live pane ────</h4><p>そのペインの現在の表示内容の末尾。最新の生の状況。</p></div>
+  </div>
+
+  <h2 id="how">仕組み・データフロー</h2>
+  <pre><code>tmux list-panes ──┐
+                  ├─→ 各ペイン (id %9, cwd, activity)
+ps -axo comm ─────┘        │
+   claude プロセス抽出      │ TMUX_PANE 環境変数で
+   (pgrepは取りこぼす)      │ ペイン⇔claudeを一意対応
+                          ▼
+            ┌─ claude が動くペインだけ ─┐
+            │                          │
+   capture-pane           cwd → ~/.claude/projects/&lt;encoded&gt;/
+   → status 判定          → 最新 *.jsonl → ai-title/最後のprompt/応答
+            │                          │
+            └────────→ Session ←───────┘
+                         │ Waiting→Working→Idle 順にソート
+                         ▼
+                  fzf 一覧 + preview ──Enter──→ tmux switch-client
+                                                 select-window / select-pane</code></pre>
+  <ul>
+    <li><strong>ペイン⇔セッション対応</strong>：各 <code>claude</code> プロセスの環境変数 <code>TMUX_PANE</code>（例 <code>%9</code>）を <code>ps -E</code> から読み、tmux ペインと一意に対応づけ（同一 cwd に複数 claude がいても曖昧さなし）。</li>
+    <li><strong>claude の検出</strong>：<code>ps -axo comm</code> で実行ファイル名が <code>claude</code> のものを拾う。<code>pgrep -x claude</code> は genuine な claude を取りこぼすことがあるため不使用。また <code>tmux</code> 上では <code>claude</code> のコマンド名がバージョン番号（<code>2.1.169</code> 等）に化けるので、コマンド名一致では検出できない。</li>
+    <li><strong>recap の特定</strong>：cwd を <code>~/.claude/projects/&lt;英数字以外を - に置換&gt;</code> に変換してトランスクリプトを探す。</li>
+    <li><strong>複数セッションの振り分け</strong>：同一 cwd に複数 claude がある場合、ペインの最終アクティビティ時刻とファイル更新時刻で対応づける。</li>
+  </ul>
+
+  <h2 id="limits">制限・既知の挙動</h2>
+  <div class="note warn">
+    <ul style="margin:6px 0">
+      <li><strong>recap はベストエフォート</strong>：同一 cwd で複数の claude を走らせている場合、どのトランスクリプトがどのペインか厳密には断定できないため、アクティビティ時刻で推定します（ステータスとペイン移動は常に正確）。</li>
+      <li><strong>新規セッション</strong>：<code>ai-title</code> がまだ生成されていないと、タイトルの代わりに「最後のプロンプト」を表示します。</li>
+      <li><strong>ステータスは推定</strong>：ペインの表示テキストからのヒューリスティック判定。カスタムテーマや特殊な表示では外すことがあります。</li>
+      <li><strong>tmux 内の claude のみ</strong>：<code>TMUX_PANE</code> を持つ＝tmux ペインで起動した claude が対象。tmux 外の claude は出ません。</li>
+    </ul>
+  </div>
+
+  <h2 id="dev">開発（TDD構成）</h2>
+  <pre><code>ccux/
+├── cmd/ccux/main.go        # CLI・fzf連携・表示整形・表示幅(CJK)処理
+└── internal/
+    ├── tmux/               # list-panes 解析 / capture / jump
+    ├── proc/               # ps から claude検出 + TMUX_PANE 抽出
+    ├── status/             # capture-pane → ステータス判定 / context%
+    ├── transcript/         # cwd→projectsパス / jsonl から recap 抽出
+    └── session/            # 上記を統合・cwd別にtranscript振り分け</code></pre>
+  <p>パース・判定・対応づけといったロジックを<strong>純粋関数</strong>に寄せ、各パッケージに単体テストを置いています。</p>
+  <pre><code>make test    # go test ./...
+make build   # ./ccux を生成
+make install # go install</code></pre>
+
+  <footer>
+    ccux · <a href="https://github.com/2357gi/ccux">github.com/2357gi/ccux</a> · generated with Claude Code
+  </footer>
+</div>
+</body>
+</html>

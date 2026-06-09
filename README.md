@@ -5,16 +5,16 @@ tmux の複数ペインで横断的に動いている **Claude Code セッショ
 ```
 $ ccux
 Claude Sessions > █
-  ▲ Waiting   kanban-guesser   main          Brainstorm signboard award categories
-  ▲ Waiting   sre-toolbox      main     0%   Manual investigation after reconnecting…
-  … Working   dotfiles         master  11.7% ccux を作る
-  … Working   sre-toolbox      main    14.6% Create cost summary in markdown
+  ▲ Waiting   web-app          main          Add OAuth login flow
+  ▲ Waiting   api-server       develop  0%   Investigate request timeout
+  … Working   dotfiles         master  11.7% Build ccux tool
+  … Working   cli-tool         main    14.6% Refactor config loader
                                               ┌─ preview ────────────────────────┐
-                                              │ … Working  sre-toolbox            │
+                                              │ … Working  cli-tool            │
                                               │ branch main                       │
-                                              │ ▌ Create cost summary in markdown │
-                                              │ you › SP/RI の購入コストは…       │
-                                              │ claude › 完了しました。3月の…    │
+                                              │ ▌ Refactor config loader          │
+                                              │ you › Split the loader in two?    │
+                                              │ claude › Done — all tests pass.   │
                                               │ ──── live pane ────               │
                                               └───────────────────────────────────┘
 ```

@@ -19,7 +19,9 @@ const usage = `ccux - browse Claude Code sessions across tmux panes and jump to 
 
 Usage:
   ccux                 interactive picker (fzf) -> jump to the chosen pane
+                       (ctrl-r refreshes the table; preview is always live)
   ccux list            print the session table to stdout
+  ccux feed            print the fzf input lines (used by the ctrl-r reload)
   ccux preview <pane>  print the status + recap for one pane (used by fzf)
   ccux jump <pane>     switch the tmux client to the given pane
   ccux version         print the version
@@ -38,6 +40,8 @@ func main() {
 		err = runInteractive()
 	case "list":
 		err = runList()
+	case "feed":
+		err = runFeed()
 	case "preview":
 		if len(args) < 2 {
 			err = fmt.Errorf("preview needs a pane id")
@@ -67,12 +71,17 @@ func main() {
 
 // runInteractive collects sessions, lets the user pick one with fzf (with a
 // live recap preview), and jumps to the chosen pane.
+//
+// The session table is a snapshot taken when fzf launches; press ctrl-r to
+// reload it (re-running `ccux feed`). The preview pane re-runs `ccux preview`
+// on every selection move, so the recap and the live pane tail there are always
+// current.
 func runInteractive() error {
-	sessions, err := session.Collect()
+	input, n, err := feedLines()
 	if err != nil {
 		return err
 	}
-	if len(sessions) == 0 {
+	if n == 0 {
 		fmt.Println("No Claude Code sessions found in tmux panes.")
 		fmt.Println("Start one with `claude` inside a tmux pane.")
 		return nil
@@ -82,17 +91,9 @@ func runInteractive() error {
 	if err != nil {
 		self = "ccux"
 	}
+	q := "'" + self + "'"
 
-	var input strings.Builder
-	for _, s := range sessions {
-		// field 1 (hidden) = pane id for the preview/jump; field 2 = display
-		input.WriteString(s.PaneID)
-		input.WriteByte('\t')
-		input.WriteString(formatRow(s))
-		input.WriteByte('\n')
-	}
-
-	header := fmt.Sprintf("  %s  %s  %s  %s",
+	header := fmt.Sprintf("  %s  %s  %s  %s   (ctrl-r: refresh)",
 		pad("STATUS", 10), pad("PROJECT", 20), pad("BRANCH", 16), "RECAP")
 
 	fzf := exec.Command("fzf",
@@ -103,12 +104,13 @@ func runInteractive() error {
 		"--reverse",
 		"--header", header,
 		"--prompt", "Claude Sessions > ",
-		"--preview", "'"+self+"' preview {1}",
+		"--preview", q+" preview {1}",
 		"--preview-window", "right:55%:wrap",
+		"--bind", "ctrl-r:reload("+q+" feed)",
 		"--color", "pointer:75,marker:75,prompt:75,info:240,header:245,hl:75,hl+:75",
 	)
 	fzf.Stderr = os.Stderr
-	fzf.Stdin = strings.NewReader(input.String())
+	fzf.Stdin = strings.NewReader(input)
 
 	out, err := fzf.Output()
 	if err != nil {
@@ -120,6 +122,35 @@ func runInteractive() error {
 		return nil
 	}
 	return tmux.Jump(paneID)
+}
+
+// feedLines builds the tab-separated fzf input for every session: field 1 is
+// the hidden pane id (for preview/jump), field 2 is the colored display row. It
+// also returns the number of sessions found.
+func feedLines() (string, int, error) {
+	sessions, err := session.Collect()
+	if err != nil {
+		return "", 0, err
+	}
+	var b strings.Builder
+	for _, s := range sessions {
+		b.WriteString(s.PaneID)
+		b.WriteByte('\t')
+		b.WriteString(formatRow(s))
+		b.WriteByte('\n')
+	}
+	return b.String(), len(sessions), nil
+}
+
+// runFeed prints the fzf input lines. Used as the ctrl-r reload source so the
+// picker can refresh the session table without restarting.
+func runFeed() error {
+	input, _, err := feedLines()
+	if err != nil {
+		return err
+	}
+	fmt.Print(input)
+	return nil
 }
 
 // paneIDFromSelection extracts the hidden pane-id (field 1) from a line fzf

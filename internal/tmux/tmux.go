@@ -79,6 +79,17 @@ func Capture(paneID string, scrollback int) (string, error) {
 	return string(out), nil
 }
 
+// CaptureVisible returns only the currently visible screen of a pane (no
+// scrollback). This is what status classification should use: the current state
+// is at the bottom of the screen, and scrollback would carry stale lines.
+func CaptureVisible(paneID string) (string, error) {
+	out, err := exec.Command("tmux", "capture-pane", "-t", paneID, "-p").Output()
+	if err != nil {
+		return "", err
+	}
+	return string(out), nil
+}
+
 // Jump focuses the given pane: switch the client to its session, then select
 // the window and pane.
 func Jump(paneID string) error {
